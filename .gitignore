@@ -1,0 +1,18 @@
+# ignoring files.
+
+*.exe 
+*.dll 
+*.so
+*.log
+api_key.txt
+
+
+# cubeide 프로젝트 메타데이터 무시
+.metadata/
+
+# cubeide 프로젝트 설정 파일 무시
+.settings/
+
+# cubeide 디버그, 릴리즈 빌드파일 무시
+Debug/
+Release/
