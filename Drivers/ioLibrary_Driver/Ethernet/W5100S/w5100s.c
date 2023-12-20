@@ -111,6 +111,7 @@ uint8_t  WIZCHIP_READ(uint32_t AddrSel)
    WIZCHIP_CRITICAL_ENTER();
    WIZCHIP.CS._select();
 
+#if( (_WIZCHIP_IO_MODE_ ==  _WIZCHIP_IO_MODE_SPI_))
    if(!WIZCHIP.IF.SPI._read_burst || !WIZCHIP.IF.SPI._write_burst) 	// byte operation
    {
         WIZCHIP.IF.SPI._write_byte(0x0F);
@@ -125,6 +126,35 @@ uint8_t  WIZCHIP_READ(uint32_t AddrSel)
         WIZCHIP.IF.SPI._write_burst(spi_data, 3);
    }
    ret = WIZCHIP.IF.SPI._read_byte(); 
+#elif ( (_WIZCHIP_IO_MODE_ == _WIZCHIP_IO_MODE_SPI_5500_) )
+   if(!WIZCHIP.IF.SPI._read_burst || !WIZCHIP.IF.SPI._write_burst) 	// burst operation
+	{
+        WIZCHIP.IF.SPI._write_byte((AddrSel & 0xFF00) >>  8);
+        WIZCHIP.IF.SPI._write_byte((AddrSel & 0x00FF) >>  0);
+        WIZCHIP.IF.SPI._write_byte(0x0F);
+   }
+   else
+   {
+		spi_data[0] = (AddrSel & 0xFF00) >>  8;
+		spi_data[1] = (AddrSel & 0x00FF) >>  0;
+		spi_data[2] = 0x0F
+		WIZCHIP.IF.SPI._write_burst(spi_data, 3);
+   }
+   ret = WIZCHIP.IF.SPI._read_byte();
+#elif ( (_WIZCHIP_IO_MODE_ == _WIZCHIP_IO_MODE_BUS_INDIR_) )
+
+   //add indirect bus
+   //M20150601 : Rename the function for integrating with ioLibrary
+   //WIZCHIP.IF.BUS._write_byte(IDM_AR0,(AddrSel & 0xFF00) >>  8);
+   //WIZCHIP.IF.BUS._write_byte(IDM_AR1,(AddrSel & 0x00FF));	
+   //ret = WIZCHIP.IF.BUS._read_byte(IDM_DR);
+   WIZCHIP.IF.BUS._write_data(IDM_AR0,(AddrSel & 0xFF00) >>  8);
+   WIZCHIP.IF.BUS._write_data(IDM_AR1,(AddrSel & 0x00FF));
+   ret = WIZCHIP.IF.BUS._read_data(IDM_DR);
+
+#else
+   #error "Unknown _WIZCHIP_IO_MODE_ in W5100S. !!!"   
+#endif
 
    WIZCHIP.CS._deselect();
    WIZCHIP_CRITICAL_EXIT();
@@ -373,12 +403,11 @@ void wiz_send_data(uint8_t sn, uint8_t *wizdata, uint16_t len)
   uint16_t size;
   uint16_t dst_mask;
   uint16_t dst_ptr;
-//printf("11\n");
+
   ptr = getSn_TX_WR(sn);
-//printf("12\n");
+
   dst_mask = ptr & getSn_TxMASK(sn);
   dst_ptr = getSn_TxBASE(sn) + dst_mask;
-//printf("13\n");
   
   if (dst_mask + len > getSn_TxMAX(sn)) 
   {
@@ -393,11 +422,10 @@ void wiz_send_data(uint8_t sn, uint8_t *wizdata, uint16_t len)
   {
     WIZCHIP_WRITE_BUF(dst_ptr, wizdata, len);
   }
-//printf("14\n");
+
   ptr += len;
 
-  setSn_TX_WR(sn, ptr);
-//printf("15\n");
+  setSn_TX_WR(sn, ptr);  
 }
 
 

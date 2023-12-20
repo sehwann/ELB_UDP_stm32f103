@@ -1,13 +1,8 @@
-#include "stm32f1xx_hal.h"
 #include <stdio.h>
 #include "loopback.h"
 #include "socket.h"
 #include "wizchip_conf.h"
 
-extern TIM_HandleTypeDef htim6;
-extern TIM_HandleTypeDef htim7;
-
-#if 1
 
 int32_t loopback_tcps(uint8_t sn, uint8_t* buf, uint16_t port)
 {
@@ -30,16 +25,10 @@ int32_t loopback_tcps(uint8_t sn, uint8_t* buf, uint16_t port)
 
 			printf("%d:Connected - %d.%d.%d.%d : %d\r\n",sn, destip[0], destip[1], destip[2], destip[3], destport);
 #endif
-
-			//HAL_TIM_Base_Start_IT(&htim6);
-			//HAL_TIM_Base_Start_IT(&htim7);
-
 			setSn_IR(sn,Sn_IR_CON);
          }
 		 if((size = getSn_RX_RSR(sn)) > 0) // Don't need to check SOCKERR_BUSY because it doesn't not occur.
          {
-			printf("input data\r\n");
-
 			if(size > DATA_BUF_SIZE) size = DATA_BUF_SIZE;
 			ret = recv(sn, buf, size);
 
@@ -67,8 +56,6 @@ int32_t loopback_tcps(uint8_t sn, uint8_t* buf, uint16_t port)
 #ifdef _LOOPBACK_DEBUG_
          printf("%d:Socket Closed\r\n", sn);
 #endif
-         HAL_TIM_Base_Stop_IT(&htim6);
-         HAL_TIM_Base_Stop_IT(&htim7);
          break;
       case SOCK_INIT :
 #ifdef _LOOPBACK_DEBUG_
@@ -90,7 +77,6 @@ int32_t loopback_tcps(uint8_t sn, uint8_t* buf, uint16_t port)
    }
    return 1;
 }
-#endif
 
 
 int32_t loopback_tcpc(uint8_t sn, uint8_t* buf, uint8_t* destip, uint16_t destport)
@@ -189,26 +175,13 @@ int32_t loopback_udps(uint8_t sn, uint8_t* buf, uint16_t port)
    uint8_t  destip[4];
    uint16_t destport;
 
-   //printf("case : %.2x\r\n", getSn_SR(sn));
-   //HAL_Delay(10000);
-#if 1
    switch(getSn_SR(sn))
    {
       case SOCK_UDP :
-
-
          if((size = getSn_RX_RSR(sn)) > 0)
          {
             if(size > DATA_BUF_SIZE) size = DATA_BUF_SIZE;
             ret = recvfrom(sn, buf, size, destip, (uint16_t*)&destport);
-
-            printf("0x%.2x\r\n",sn);
-            printf("0x%.2x\r\n",destip[0]);
-            printf("0x%.2x\r\n",destip[1]);
-            printf("0x%.2x\r\n",destip[2]);
-            printf("0x%.2x\r\n",destip[3]);
-            printf("%d\r\n",destport);
-
             if(ret <= 0)
             {
 #ifdef _LOOPBACK_DEBUG_
@@ -221,16 +194,6 @@ int32_t loopback_udps(uint8_t sn, uint8_t* buf, uint16_t port)
             while(sentsize != size)
             {
                ret = sendto(sn, buf+sentsize, size-sentsize, destip, destport);
-
-//               printf("sendto ip\r\n");
-//               printf("0x%.2x\r\n",sn);
-//               printf("0x%.2x\r\n",destip[0]);
-//			   printf("0x%.2x\r\n",destip[1]);
-//			   printf("0x%.2x\r\n",destip[2]);
-//			   printf("0x%.2x\r\n",destip[3]);
-//
-//			   printf("%d\r\n",destport);
-
                if(ret < 0)
                {
 #ifdef _LOOPBACK_DEBUG_
@@ -242,22 +205,12 @@ int32_t loopback_udps(uint8_t sn, uint8_t* buf, uint16_t port)
             }
          }
          break;
-
-
-
-
-
       case SOCK_CLOSED:
-
 #ifdef _LOOPBACK_DEBUG_
          //printf("%d:UDP loopback start\r\n",sn);
 #endif
-         if((ret = socket(sn, Sn_MR_UDP, port, 0x00)) != sn){
-
-        	 return ret;
-         }
-
-
+         if((ret = socket(sn, Sn_MR_UDP, port, 0x00)) != sn)
+            return ret;
 #ifdef _LOOPBACK_DEBUG_
          printf("%d:Opened, UDP loopback, port [%d]\r\n", sn, port);
 #endif
@@ -266,7 +219,5 @@ int32_t loopback_udps(uint8_t sn, uint8_t* buf, uint16_t port)
          break;
    }
    return 1;
-
-#endif
 }
 

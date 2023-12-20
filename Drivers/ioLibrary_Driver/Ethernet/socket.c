@@ -278,16 +278,12 @@ int32_t send(uint8_t sn, uint8_t * buf, uint16_t len)
    CHECK_SOCKMODE(Sn_MR_TCP);
    CHECK_SOCKDATA();
    tmp = getSn_SR(sn);
-   printf("tmp: %.2x\n",tmp);
-
    if(tmp != SOCK_ESTABLISHED && tmp != SOCK_CLOSE_WAIT) return SOCKERR_SOCKSTATUS;
    if( sock_is_sending & (1<<sn) )
    {
       tmp = getSn_IR(sn);
-      printf("tmp2: %.2x\n",tmp);
       if(tmp & Sn_IR_SENDOK)
       {
-    	  printf("3\n");
          setSn_IR(sn, Sn_IR_SENDOK);
          //M20150401 : Typing Error
 
@@ -301,16 +297,11 @@ int32_t send(uint8_t sn, uint8_t * buf, uint16_t len)
       else return SOCK_BUSY;
    }
    freesize = getSn_TxMAX(sn);
-
-   printf("freesize1: %.2x\n",freesize);
    if (len > freesize) len = freesize; // check size not to exceed MAX size.
    while(1)
    {
       freesize = getSn_TX_FSR(sn);
-      printf("freesize2: %.2x\n",freesize);
       tmp = getSn_SR(sn);
-
-      printf("tmp3: %.2x\n",tmp);
       if ((tmp != SOCK_ESTABLISHED) && (tmp != SOCK_CLOSE_WAIT))
       {
          close(sn);
@@ -326,6 +317,7 @@ int32_t send(uint8_t sn, uint8_t * buf, uint16_t len)
    while(getSn_CR(sn));
    sock_is_sending |= (1 << sn);
    //M20150409 : Explicit Type Casting
+   //return len;
    return (int32_t)len;
 }
 
@@ -483,6 +475,7 @@ int32_t recvfrom(uint8_t sn, uint8_t * buf, uint16_t len, uint8_t * addr, uint16
    CHECK_SOCKNUM();
    //CHECK_SOCKMODE(Sn_MR_UDP);
 
+
    switch((mr=getSn_MR(sn)) & 0x0F)
    {
       case Sn_MR_UDP:
@@ -526,12 +519,24 @@ int32_t recvfrom(uint8_t sn, uint8_t * buf, uint16_t len, uint8_t * addr, uint16
       			*port = (*port << 8) + head[5];
       			sock_remained_size[sn] = head[6];
       			sock_remained_size[sn] = (sock_remained_size[sn] << 8) + head[7];
+         #if _WIZCHIP_ == 5300
+            }
+         #endif
    			sock_pack_info[sn] = PACK_FIRST;
    	   }
 			if(len < sock_remained_size[sn]) pack_len = len;
 			else pack_len = sock_remained_size[sn];
 			//A20150601 : For W5300
 			len = pack_len;
+			#if _WIZCHIP_ == 5300
+			   if(sock_pack_info[sn] & PACK_FIFOBYTE)
+			   {
+			      *buf++ = sock_remained_byte[sn];
+			      pack_len -= 1;
+			      sock_remained_size[sn] -= 1;
+			      sock_pack_info[sn] &= ~PACK_FIFOBYTE;
+			   }
+			#endif
 			//
 			// Need to packet length check (default 1472)
 			//
@@ -546,6 +551,12 @@ int32_t recvfrom(uint8_t sn, uint8_t * buf, uint16_t len, uint8_t * addr, uint16
    			// read peer's IP address, port number & packet length
     			sock_remained_size[sn] = head[0];
    			sock_remained_size[sn] = (sock_remained_size[sn] <<8) + head[1] -2;
+   			#if _WIZCHIP_ == W5300
+   			if(sock_remained_size[sn] & 0x01)
+   				sock_remained_size[sn] = sock_remained_size[sn] + 1 - 4;
+   			else
+   				sock_remained_size[sn] -= 4;
+			#endif
    			if(sock_remained_size[sn] > 1514) 
    			{
    			   close(sn);
@@ -596,10 +607,17 @@ int32_t recvfrom(uint8_t sn, uint8_t * buf, uint16_t len, uint8_t * addr, uint16
 	if(sock_remained_size[sn] != 0)
 	{
 	   sock_pack_info[sn] |= PACK_REMAINED;
+   #if _WIZCHIP_ == 5300
+	   if(pack_len & 0x01) sock_pack_info[sn] |= PACK_FIFOBYTE;
+   #endif
 	}
 	else sock_pack_info[sn] = PACK_COMPLETED;
+#if _WIZCHIP_ == 5300
+   pack_len = len;
+#endif
    //
    //M20150409 : Explicit Type Casting
+   //return pack_len;
    return (int32_t)pack_len;
 }
 
