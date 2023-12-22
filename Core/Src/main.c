@@ -28,7 +28,6 @@
 #include "wizchip_conf.h"
 #include "W5100S/w5100s.h"
 
-#include "queue_t.h"
 
 /* USER CODE END Includes */
 
@@ -269,18 +268,68 @@ static void csDisable(void)
 
 
 #define MAX_BUFFER_SIZE 20
-char U2buffer[MAX_BUFFER_SIZE];
-uint32_t U2buffer_length = 0;
-Queue_t gQueue;
 
-uint8_t u2_recv;
+typedef enum {
+	IDLE = 0,
+	HEADER,
+	RECEIVING_DATA
+} State;
+
+State state;
+uint8_t 	u2_recv;
+uint8_t 	u2_buf[ETH_MAX_BUF_SIZE];
+uint32_t	u2_index;
+uint8_t 	pars_buf[ETH_MAX_BUF_SIZE];
+uint32_t	pars_index;
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if(huart->Instance == USART2)
     {
         HAL_UART_Receive_IT(&huart2, &u2_recv, 1);
-        Node* node = node_new(&u2_recv, sizeof(u2_recv));
-		queue_enqueue(&gQueue, node);
+        switch(state)
+		{
+			case IDLE: {
+				if(u2_recv == 'S')	 				// Check the first char 'S'
+				{
+					u2_buf[u2_index++] = u2_recv;
+					state = HEADER;
+				}
+			} break;
+
+			case HEADER: {
+				if(u2_recv == '0') 					// Check the second char '0'
+				{
+					u2_buf[u2_index++] = u2_recv;
+					state = RECEIVING_DATA;			// Switch to RECEIVING_DATA state
+//					HAL_TIM_Base_Start(&htim6);		// 100ms
+				}
+				else								// If not '0', buffer and index init, Switch to IDLE state
+				{
+					memset(u2_buf, 0, sizeof(u2_buf));
+					u2_index = 0;
+					state = IDLE;
+				}
+			} break;
+
+			case RECEIVING_DATA: {
+				u2_buf[u2_index++] = u2_recv;
+				if(u2_index == 17) 	// received 17 pieces of data
+				{
+					pars_index = u2_index;
+					memcpy(pars_buf, u2_buf, strlen((char *)u2_buf));
+//						printf("%s\n",pars_buf);
+
+					memset(u2_buf, 0, sizeof(u2_buf));	// Initializes buffers and indexes
+					u2_index = 0;
+					state = IDLE;								// Switch to IDLE state
+				}
+
+			} break;
+
+			default:
+				break;
+		}
     }
 }
 
@@ -304,65 +353,53 @@ typedef struct {
 } parseData;
 
 
+
+
+typedef struct {
+  uint16_t off0;
+  uint16_t off2;
+  uint32_t off4;
+  uint32_t off8;
+} mcu_id;
+
+#define MMIO16(addr) (*(volatile uint16_t *)(addr))
+#define MMIO32(addr) (*(volatile uint32_t *)(addr))
+#define U_ID 0x1ffff7e8		//STM32F103VCTx ID register
+
+void uid_read(mcu_id *id) {
+  id->off0 = MMIO16(U_ID + 0x0);
+  id->off2 = MMIO16(U_ID + 0x2);
+  id->off4 = MMIO32(U_ID + 0x4);
+  id->off8 = MMIO32(U_ID + 0x8);
+}
+
+mcu_id id;
+
 void parse_send_data()
 {
-//	uint32_t rx_stx[2], rx_id[3], rx_mode[2], \
-//		         rx_v[4], rx_c[4], rx_leak_curr[3], rx_status[3],\
-//				 rx_etx[4];
-//	uint32_t parsing_id, parsing_mode, parsing_v, \
-//				 parsing_c, power, insulation;
-//
-//	uint32_t elb_mode[10], elb_status[10], elb_vol[10], \
-//		         elb_load_curr[10], elb_leak_curr[10], elb_power[10], \
-//				 elb_insulation[10];
-//
-//	uint32_t elb_door = 0;
-//	uint32_t elb_mode_str[50], elb_status_str[50], \
-//				elb_vol_str[50], elb_load_curr_str[50], elb_leak_curr_str[50],\
-//				elb_power_str[50], elb_insulation_str[50];
-
 	parseData data = {0};
-#if 0
-	setIMR(0b00000000);
-	sendto(SOCKET_LOOP, (uint8_t *)U2buffer, strlen(U2buffer), destip, destport);
-	char bsiz_str[10];
-	uint32_t bsiz = strlen(U2buffer);
-	sprintf(bsiz_str, "%u", bsiz);
-	sendto(SOCKET_LOOP, (uint8_t *)bsiz_str, strlen(bsiz_str), destip, destport);	// 19
-	sendto(SOCKET_LOOP, &U2buffer[0], sizeof(U2buffer[0]), destip, destport);		// (hex)0A
-	sendto(SOCKET_LOOP, &U2buffer[1], sizeof(U2buffer[1]), destip, destport);		// S
-	sendto(SOCKET_LOOP, &U2buffer[2], sizeof(U2buffer[2]), destip, destport);		// 0
-	sendto(SOCKET_LOOP, &U2buffer[15], sizeof(U2buffer[15]), destip, destport);		// X
-	sendto(SOCKET_LOOP, &U2buffer[16], sizeof(U2buffer[16]), destip, destport);		// X
-	sendto(SOCKET_LOOP, &U2buffer[17], sizeof(U2buffer[17]), destip, destport);		// X
-	sendto(SOCKET_LOOP, &U2buffer[18], sizeof(U2buffer[18]), destip, destport);		// E
-	setIMR(0b00000001);
-#endif
-#if 1
-	memmove(&U2buffer[0], &U2buffer[1], U2buffer_length - 2);
-	U2buffer_length-=2;
-	if (U2buffer_length == 17 && U2buffer[0] == 'S' && U2buffer[16] == 'X')
+	uint32_t comMcuId = 0;
+
+	if (strlen((const char *)pars_buf) == 17 && pars_buf[0] == 'S' && pars_buf[16] == 'X')
 	{
-		sscanf((char *)U2buffer, "%1s%2s%1s%3s%3s%2s%2s%3s",
+		sscanf((char *)pars_buf, "%1s%2s%1s%3s%3s%2s%2s%3s",
 				   (char *) data.rx_stx, (char *) data.rx_id, (char *) data.rx_mode, \
 				   (char *) data.rx_v, (char *) data.rx_c, (char *) data.rx_leak_curr, \
 				   (char *) data.rx_status, (char *) data.rx_etx);
+		memset(pars_buf, 0, sizeof(pars_buf));
 
 		data.parsing_id = (uint32_t)atoi((char *) data.rx_id);
-		//	 parsing_mode = (uint32_t)atoi((char *) rx_mode);
 		data.parsing_v = (uint32_t)atoi((char *) data.rx_v);
 		data.parsing_c = (uint32_t)atoi((char *) data.rx_c);
 
 		data.power = (uint32_t)(data.parsing_v * data.parsing_c);
-		if (data.parsing_c != 0)
-		{
+		if (data.parsing_c != 0) {
 			data.insulation = (uint32_t)(data.parsing_v / (float)data.parsing_c);
 		}
-		else
-		{
+		else {
 			// 예외처리추가해야 함.
 			printf("error : c = 0 \n");
-			data.insulation = 1;
+			data.insulation = 1;	// 수정
 		}
 		if ( data.parsing_id > 0 &&  data.parsing_id <= 10) {
 			data.elb_mode[ data.parsing_id - 1] = (uint32_t)atoi((char *) data.rx_mode);
@@ -374,23 +411,27 @@ void parse_send_data()
 			data.elb_insulation[ data.parsing_id - 1] =  data.insulation;
 		}
 		sprintf((char *) data.elb_mode_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_mode[0],  data.elb_mode[1],  data.elb_mode[2],  data.elb_mode[3],  data.elb_mode[4],  data.elb_mode[5],  data.elb_mode[6],  data.elb_mode[7],  data.elb_mode[8],  data.elb_mode[9]);
-		//door
+		//door? mcuid 만들어서 여기 추가
 		sprintf((char *) data.elb_status_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_status[0],  data.elb_status[1],  data.elb_status[2],  data.elb_status[3],  data.elb_status[4],  data.elb_status[5],  data.elb_status[6],  data.elb_status[7],  data.elb_status[8],  data.elb_status[9]);
 		sprintf((char *) data.elb_vol_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_vol[0],  data.elb_vol[1],  data.elb_vol[2],  data.elb_vol[3],  data.elb_vol[4],  data.elb_vol[5],  data.elb_vol[6],  data.elb_vol[7],  data.elb_vol[8],  data.elb_vol[9]);
 		sprintf((char *) data.elb_load_curr_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_load_curr[0],  data.elb_load_curr[1],  data.elb_load_curr[2],  data.elb_load_curr[3],  data.elb_load_curr[4],  data.elb_load_curr[5],  data.elb_load_curr[6],  data.elb_load_curr[7],  data.elb_load_curr[8],  data.elb_load_curr[9]);
 		sprintf((char *) data.elb_leak_curr_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_leak_curr[0],  data.elb_leak_curr[1],  data.elb_leak_curr[2],  data.elb_leak_curr[3],  data.elb_leak_curr[4],  data.elb_leak_curr[5],  data.elb_leak_curr[6],  data.elb_leak_curr[7],  data.elb_leak_curr[8],  data.elb_leak_curr[9]);
 		sprintf((char *) data.elb_power_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_power[0],  data.elb_power[1],  data.elb_power[2],  data.elb_power[3],  data.elb_power[4],  data.elb_power[5],  data.elb_power[6],  data.elb_power[7],  data.elb_power[8],  data.elb_power[9]);
 		sprintf((char *) data.elb_insulation_str, "[%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld]",  data.elb_insulation[0],  data.elb_insulation[1],  data.elb_insulation[2],  data.elb_insulation[3],  data.elb_insulation[4],  data.elb_insulation[5],  data.elb_insulation[6],  data.elb_insulation[7],  data.elb_insulation[8],  data.elb_insulation[9]);
-		sprintf((char *) data.elb_RE_json, "{\"mod_id\":%ld,\"mod_door\":%ld,\"elb_mode\":%s,\"elb_status\":%s,\"elb_volt\":%s,\"elb_load_curr\":%s,\"elb_leak_curr\":%s,\"elb_power\":%s,\"elb_insulation\":%s}",  data.parsing_id,  data.elb_door, (char *) data.elb_mode_str, (char *) data.elb_status_str, (char *) data.elb_vol_str, (char *) data.elb_load_curr_str, (char *) data.elb_leak_curr_str,(char *) data.elb_power_str, (char *) data.elb_insulation_str);
+
+		// mcu id
+		uid_read(&id);
+		comMcuId = ((uint32_t)id.off0 << 16) | id.off2;
+
+		sprintf((char *) data.elb_RE_json, "{\"mcu_id\":%ld,\"mod_id\":%ld,\"mod_door\":%ld,\"elb_mode\":%s,\"elb_status\":%s,\"elb_volt\":%s,\"elb_load_curr\":%s,\"elb_leak_curr\":%s,\"elb_power\":%s,\"elb_insulation\":%s}", comMcuId ,data.parsing_id,  data.elb_door, (char *) data.elb_mode_str, (char *) data.elb_status_str, (char *) data.elb_vol_str, (char *) data.elb_load_curr_str, (char *) data.elb_leak_curr_str,(char *) data.elb_power_str, (char *) data.elb_insulation_str);
 
 		setIMR(0b00000000);
-		sendto(SOCKET_LOOP, (uint8_t *)data.elb_RE_json, strlen(data.elb_RE_json), destip, destport);
+		sendto(SOCKET_LOOP, (uint8_t *)data.elb_RE_json, strlen((const char *)data.elb_RE_json), destip, destport);
 		setIMR(0b00000001);
 	}
 	else {
-		U2buffer_length = 0;
+		memset(pars_buf, 0, sizeof(pars_buf));
 	}
-#endif
 }
 
 
@@ -404,7 +445,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	{
 
 	}
-	if(htim->Instance==TIM3)		// 1s
+	if(htim->Instance==TIM3)		// 100ms
 	{
 		HAL_GPIO_WritePin(DE_GPIO_Port, DE_Pin, 1);
 		HAL_UART_Transmit(&huart2, (uint8_t *)RE_DATA_SEND, strlen((char *)RE_DATA_SEND), 10);
@@ -413,10 +454,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 	if(htim->Instance==TIM4)		// 1s
 	{
-		if (U2buffer_length > 0)
+		if(pars_buf > 0)
 		{
 			parse_send_data();
-			U2buffer_length = 0;
 		}
 	}
 }
@@ -440,11 +480,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 			setSn_IR(SOCKET_LOOP, 0xff);		// Clear flag
 			return;
 		}
-		udp_rx_data_id = (buf[2]%16);	// elb_mode check id
+//		udp_rx_data_id = (buf[2]%16);	// elb_mode check id
 
 		// Co DATA Sendto 485
 		HAL_GPIO_WritePin(DE_GPIO_Port, DE_Pin, 1);
-		HAL_UART_Transmit(&huart2, (uint8_t *)buf, strlen(buf), 10);
+		HAL_UART_Transmit(&huart2, (uint8_t *)buf, strlen((const char *)buf), 10);
 		HAL_GPIO_WritePin(DE_GPIO_Port, DE_Pin, 0);
 	}
 	setSn_IR(SOCKET_LOOP, 0xff);		// Clear flag
@@ -509,8 +549,6 @@ int main(void)
 	HAL_TIM_Base_Start_IT(&htim4);
 #endif
 
-	queue_new(&gQueue, MAX_BUFFER_SIZE);
-
 
   /* USER CODE END 2 */
 
@@ -518,26 +556,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  while (gQueue.qsize > 0 && U2buffer_length < MAX_BUFFER_SIZE)
-	  {
-			Node queued_node = queue_dequeue(&gQueue);
-			int node_length = strlen(queued_node.str);
-
-			if (U2buffer_length + node_length < MAX_BUFFER_SIZE) {
-				memcpy(U2buffer + U2buffer_length, queued_node.str, node_length);
-				U2buffer_length += node_length;
-			}
-			else {
-				break;
-			}
-	 }
 
 
-
-
-
-
-//	  HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
